@@ -145,7 +145,7 @@ export default function App() {
               <h2>Shop South Africa, delivered home to Botswana.</h2>
               <p>Tell us what you want to buy and we'll work out everything it costs to land it at your door — purchase, transport, customs, and delivery, in one payment.</p>
               <div className="hero-note">
-                <strong>Note on product links:</strong> pasting a link doesn't auto-fill details yet — most SA retailer sites (including Takealot) build their pages with JavaScript, so the price isn't readable from the page source. Enter the details manually below for now; this is flagged as a known next step, not a bug.
+                <strong>Note on product links:</strong> pasting a link doesn't auto-fill details yet most SA retailer sites (including Takealot) build their pages with with a certain program, so the price isn't readable from the page source. Enter the details manually below for now; this is flagged as a known next step.
               </div>
             </div>
             <div className="form-card">
