@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { getQuote, createOrder, listOrders, advanceOrder } from "./api.js";
 
-const RETAILERS = ["Takealot", "Makro", "Builders", "Game", "Incredible Connection"];
+const RETAILERS = ["Takealot", "Makro", "SHEIN", "Game", "Incredible Connection","Bash","Builders"];
 const SIZES = [
   { key: "Small", label: "<5kg" },
   { key: "Medium", label: "5–15kg" },
@@ -304,3 +304,6 @@ export default function App() {
     </div>
   );
 }
+
+
+
