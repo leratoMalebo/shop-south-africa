@@ -1,19 +1,17 @@
 import { Router } from "express";
-import { computeBreakdown } from "../calc.js";
+import { computeBatchBreakdown } from "../calc.js";
 
 const router = Router();
 
 // POST /api/quote
-// body: { price: number, parcelSize: "Small"|"Medium"|"Large", insurance: boolean }
+// body: { items: [{ price, parcelSize }, ...], insurance: boolean }
 // Used on the "Cost" screen before an order exists — no DB write.
+// Accepts one or many items; the discount for shipping multiple items
+// together is applied automatically inside computeBatchBreakdown.
 router.post("/", (req, res) => {
-  const { price, parcelSize, insurance } = req.body;
+  const { items, insurance } = req.body;
   try {
-    const breakdown = computeBreakdown({
-      price: Number(price),
-      parcelSize,
-      insurance: Boolean(insurance),
-    });
+    const breakdown = computeBatchBreakdown(items, Boolean(insurance));
     res.json(breakdown);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -21,3 +19,5 @@ router.post("/", (req, res) => {
 });
 
 export default router;
+
+

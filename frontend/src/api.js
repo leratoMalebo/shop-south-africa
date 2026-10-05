@@ -10,11 +10,12 @@ async function handle(res) {
   return data;
 }
 
-export function getQuote({ price, parcelSize, insurance }) {
+// items: [{ price, parcelSize, retailer?, productName?, productLink? }, ...]
+export function getQuote({ items, insurance }) {
   return fetch(`${BASE}/quote`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ price, parcelSize, insurance }),
+    body: JSON.stringify({ items, insurance }),
   }).then(handle);
 }
 
@@ -33,3 +34,15 @@ export function listOrders() {
 export function advanceOrder(id) {
   return fetch(`${BASE}/orders/${id}/advance`, { method: "POST" }).then(handle);
 }
+
+export function requestStore({ storeName, link, note }) {
+  return fetch(`${BASE}/store-requests`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ storeName, link, note }),
+  }).then(handle);
+}
+
+
+
+

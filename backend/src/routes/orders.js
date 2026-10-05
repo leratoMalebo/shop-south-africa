@@ -1,30 +1,28 @@
 import { Router } from "express";
 import crypto from "node:crypto";
-import { computeBreakdown, generateReference, STAGES } from "../calc.js";
+import { computeBatchBreakdown, generateReference, STAGES } from "../calc.js";
 import { createOrder, listOrders, getOrder, updateOrderStage } from "../db.js";
 
 const router = Router();
 
-// POST /api/orders — creates an order. In this prototype, "creating" an
-// order IS the payment confirmation step (stageIndex starts at 0 = "Payment
-// confirmed"). Wiring a real payment gateway means calling this only from
-// that gateway's success webhook/callback, not directly from the client.
+// POST /api/orders — creates an order from one or more items (a "batch").
+// In this prototype, creating an order IS the payment confirmation step
+// (stageIndex starts at 0 = "Payment confirmed"). Wiring a real payment
+// gateway means calling this only from that gateway's success
+// webhook/callback, not directly from the client.
 router.post("/", async (req, res) => {
-  const { productName, productLink, retailer, parcelSize, price, insurance, paymentMethod } = req.body;
+  const { items, insurance, paymentMethod } = req.body;
 
   try {
-    const breakdown = computeBreakdown({ price: Number(price), parcelSize, insurance: Boolean(insurance) });
+    const breakdown = computeBatchBreakdown(items, Boolean(insurance));
 
     const order = await createOrder({
       id: crypto.randomUUID(),
       reference: generateReference(),
-      productName,
-      productLink: productLink || null,
-      retailer,
-      parcelSize,
-      price: breakdown.price,
+      items: JSON.stringify(items),
       serviceFee: breakdown.serviceFee,
       transportFee: breakdown.transportFee,
+      rawTransportFee: breakdown.rawTransportFee,
       customsDuty: breakdown.customsDuty,
       insuranceFee: breakdown.insuranceFee,
       totalZar: breakdown.totalZar,
@@ -72,13 +70,41 @@ router.post("/:id/advance", async (req, res) => {
   res.json(serialize(updated));
 });
 
+// Orders placed before the batch-orders update have no "items" column —
+// reconstruct a one-item array from their old productName/retailer/etc.
+// columns so they still display correctly in the tracker.
 function serialize(order) {
+  const items = order.items
+    ? JSON.parse(order.items)
+    : [{
+        productName: order.productName,
+        productLink: order.productLink,
+        retailer: order.retailer,
+        parcelSize: order.parcelSize,
+        price: order.price,
+      }];
+
   return {
-    ...order,
+    id: order.id,
+    reference: order.reference,
+    items,
+    serviceFee: order.serviceFee,
+    transportFee: order.transportFee,
+    rawTransportFee: order.rawTransportFee,
+    customsDuty: order.customsDuty,
+    insuranceFee: order.insuranceFee,
+    totalZar: order.totalZar,
+    totalBwp: order.totalBwp,
+    paymentMethod: order.paymentMethod,
     paid: Boolean(order.paid),
-    stages: STAGES,
+    stageIndex: order.stageIndex,
     stageTimes: JSON.parse(order.stageTimes),
+    stages: STAGES,
+    createdAt: order.createdAt,
+    updatedAt: order.updatedAt,
   };
 }
 
 export default router;
+
+

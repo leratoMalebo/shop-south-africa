@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { getQuote, createOrder, listOrders, advanceOrder } from "./api.js";
+import { getQuote, createOrder, listOrders, advanceOrder, requestStore } from "./api.js";
 
-const RETAILERS = ["Takealot", "Makro", "SHEIN", "Game", "Superbalist","Bash","Builders","Incredible Connection","Akhona Furniture"];
+const RETAILERS = ["Takealot", "Makro", "SHEIN", "Game", "Superbalist", "Bash", "Builders", "Incredible Connection", "Akhona Furniture", "Other"];
 const SIZES = [
   { key: "Small", label: "<5kg" },
   { key: "Medium", label: "5–15kg" },
@@ -15,9 +15,9 @@ const PAY_METHODS = [
 ];
 const STAGES = [
   "Payment confirmed",
-  "Purchased from retailer",
+  "Purchased from retailer(s)",
   "Received at Johannesburg warehouse",
-  "In transit to Botswana",
+  "Consolidated and in transit to Botswana",
   "Customs clearance",
   "Delivered / ready for collection",
 ];
@@ -28,6 +28,8 @@ const STEPS = [
   { key: "s4", label: "Track" },
 ];
 
+const emptyDraft = { link: "", retailer: "Takealot", customStore: "", name: "", price: "", size: "Small" };
+
 function money(n) {
   return Number(n).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
@@ -37,66 +39,104 @@ function fmtTime(iso) {
   return d.toLocaleDateString("en-ZA", { weekday: "short", day: "numeric", month: "short" }) +
     " · " + d.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" });
 }
+function itemRetailer(item) { return item.retailer; }
 
 export default function App() {
   const [screen, setScreen] = useState("s1");
-  const [form, setForm] = useState({
-    link: "", retailer: "Takealot", name: "", price: "", size: "Small", insurance: false,
-  });
+  const [draft, setDraft] = useState(emptyDraft);
+  const [cart, setCart] = useState([]);
+  const [cartError, setCartError] = useState("");
+  const [insurance, setInsurance] = useState(false);
   const [quote, setQuote] = useState(null);
-  const [formError, setFormError] = useState("");
+  const [quoteError, setQuoteError] = useState("");
   const [paymentMethod, setPaymentMethod] = useState(PAY_METHODS[0].key);
   const [orders, setOrders] = useState([]);
   const [activeOrderId, setActiveOrderId] = useState(null);
   const [placing, setPlacing] = useState(false);
 
+  const [storeFormOpen, setStoreFormOpen] = useState(false);
+  const [storeName, setStoreName] = useState("");
+  const [storeNote, setStoreNote] = useState("");
+  const [storeStatus, setStoreStatus] = useState("idle"); // idle | sending | sent | error
+  const [storeErrorMsg, setStoreErrorMsg] = useState("");
+
   const refreshOrders = useCallback(() => {
     listOrders().then(setOrders).catch(() => {});
   }, []);
-
   useEffect(() => { refreshOrders(); }, [refreshOrders]);
 
-  async function handleGetQuote() {
-    const price = parseFloat(form.price);
-    if (!form.name.trim() || !price || price <= 0) {
-      setFormError("Enter a product name and a price greater than zero.");
+  function addItemToCart() {
+    const price = parseFloat(draft.price);
+    const retailer = draft.retailer === "Other" ? draft.customStore.trim() : draft.retailer;
+
+    if (!draft.name.trim() || !price || price <= 0) {
+      setCartError("Enter a product name and a price greater than zero.");
       return;
     }
-    setFormError("");
+    if (draft.retailer === "Other" && !retailer) {
+      setCartError("Tell us which store this item is from.");
+      return;
+    }
+    setCartError("");
+
+    setCart(prev => [...prev, {
+      localId: crypto.randomUUID(),
+      productLink: draft.link.trim() || null,
+      retailer,
+      productName: draft.name.trim(),
+      price,
+      parcelSize: draft.size,
+    }]);
+
+    // If someone shops from a store we don't officially support yet, log it
+    // as demand automatically — same signal as the standalone request form.
+    if (draft.retailer === "Other" && retailer) {
+      requestStore({ storeName: retailer, note: "Auto-logged: used as 'Other' at checkout" }).catch(() => {});
+    }
+
+    setDraft({ ...emptyDraft, retailer: draft.retailer === "Other" ? "Takealot" : draft.retailer });
+  }
+
+  function removeItem(localId) {
+    setCart(prev => prev.filter(i => i.localId !== localId));
+  }
+
+  async function handleGetQuote() {
+    if (cart.length === 0) {
+      setCartError("Add at least one item to your cart first.");
+      return;
+    }
+    setQuoteError("");
     try {
-      const q = await getQuote({ price, parcelSize: form.size, insurance: form.insurance });
+      const q = await getQuote({ items: cart.map(stripLocal), insurance });
       setQuote(q);
       setScreen("s2");
     } catch (err) {
-      setFormError(err.message);
+      setQuoteError(err.message);
     }
   }
 
-  async function refreshQuote(nextForm) {
-    const price = parseFloat(nextForm.price);
-    if (!price || price <= 0) return;
+  async function refreshQuoteWithInsurance(nextInsurance) {
     try {
-      const q = await getQuote({ price, parcelSize: nextForm.size, insurance: nextForm.insurance });
+      const q = await getQuote({ items: cart.map(stripLocal), insurance: nextInsurance });
       setQuote(q);
-    } catch { /* ignore mid-edit */ }
+    } catch { /* ignore */ }
   }
 
   async function handlePlaceOrder() {
     setPlacing(true);
     try {
       const order = await createOrder({
-        productName: form.name,
-        productLink: form.link || null,
-        retailer: form.retailer,
-        parcelSize: form.size,
-        price: parseFloat(form.price),
-        insurance: form.insurance,
+        items: cart.map(stripLocal),
+        insurance,
         paymentMethod,
       });
       setOrders(prev => [order, ...prev]);
       setActiveOrderId(order.id);
       setScreen("s4");
-      setForm({ link: "", retailer: "Takealot", name: "", price: "", size: "Small", insurance: false });
+      setCart([]);
+      setDraft(emptyDraft);
+      setInsurance(false);
       setQuote(null);
     } catch (err) {
       alert(err.message);
@@ -110,7 +150,31 @@ export default function App() {
     setOrders(prev => prev.map(o => (o.id === id ? updated : o)));
   }
 
+  async function handleSubmitStoreRequest() {
+    if (!storeName.trim()) {
+      setStoreErrorMsg("Enter the name of the store.");
+      return;
+    }
+    setStoreStatus("sending");
+    setStoreErrorMsg("");
+    try {
+      await requestStore({ storeName: storeName.trim(), note: storeNote.trim() || null });
+      setStoreStatus("sent");
+      setStoreName("");
+      setStoreNote("");
+    } catch (err) {
+      setStoreStatus("error");
+      setStoreErrorMsg(err.message);
+    }
+  }
+
+  function stripLocal(item) {
+    const { localId, ...rest } = item;
+    return rest;
+  }
+
   const activeOrder = orders.find(o => o.id === activeOrderId) || orders[0];
+  const cartTotal = cart.reduce((sum, i) => sum + i.price, 0);
 
   return (
     <div className="app-shell">
@@ -143,47 +207,102 @@ export default function App() {
           <div className="hero-grid">
             <div className="hero-panel">
               <h2>Shop South Africa, delivered home to Botswana.</h2>
-              <p>Tell us what you want to buy and we'll work out everything it costs to land it at your door — purchase, transport, customs, and delivery, in one payment.</p>
+              <p>Add items from one store or several — we'll consolidate them into a single shipment and a single payment, and work out everything it costs to land it at your door.</p>
               <div className="hero-note">
-                <strong>Note on product links:</strong> pasting a link doesn't auto-fill details yet most SA retailer sites (including Takealot) build their pages with with a certain program, so the price isn't readable from the page source. Enter the details manually below for now; this is flagged as a known next step.
+                <strong>Note on product links:</strong> pasting a link doesn't auto-fill details yet — most SA retailer sites (including Takealot) build their pages with JavaScript, so the price isn't readable from the page source. Enter the details manually below for now; this is a known next step.
+              </div>
+              <div className="hero-note">
+                <strong>Shopping from multiple stores?</strong> Add each item below with "Add to cart," then get one combined quote — items shipped together save on transport.
               </div>
             </div>
+
             <div className="form-card">
-              <h3 className="card-heading">Product details</h3>
+              <h3 className="card-heading">Add an item</h3>
               <div className="field">
                 <label>Product link</label>
-                <input value={form.link} onChange={e => setForm({ ...form, link: e.target.value })} placeholder="Paste product link here (for reference)" />
+                <input value={draft.link} onChange={e => setDraft({ ...draft, link: e.target.value })} placeholder="Paste product link here (for reference)" />
               </div>
               <div className="field">
                 <label>Retailer</label>
                 <div className="retailer-row">
                   {RETAILERS.map(r => (
-                    <div key={r} className={"chip" + (form.retailer === r ? " sel" : "")} onClick={() => setForm({ ...form, retailer: r })}>{r}</div>
+                    <div key={r} className={"chip" + (draft.retailer === r ? " sel" : "")} onClick={() => setDraft({ ...draft, retailer: r })}>{r}</div>
                   ))}
                 </div>
+                {draft.retailer === "Other" && (
+                  <input
+                    className="inline-followup"
+                    value={draft.customStore}
+                    onChange={e => setDraft({ ...draft, customStore: e.target.value })}
+                    placeholder="Which store? e.g. Woolworths"
+                  />
+                )}
               </div>
               <div className="field-row">
                 <div className="field">
                   <label>Product name</label>
-                  <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="e.g. Dyson V8 Cordless Vacuum" />
+                  <input value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} placeholder="e.g. Dyson V8 Cordless Vacuum" />
                 </div>
                 <div className="field">
                   <label>Product price (ZAR)</label>
-                  <input type="number" min="0" step="0.01" value={form.price} onChange={e => setForm({ ...form, price: e.target.value })} placeholder="e.g. 5499" />
+                  <input type="number" min="0" step="0.01" value={draft.price} onChange={e => setDraft({ ...draft, price: e.target.value })} placeholder="e.g. 5499" />
                 </div>
               </div>
               <div className="field">
                 <label>Parcel size</label>
                 <div className="size-row">
                   {SIZES.map(s => (
-                    <div key={s.key} className={"chip size-chip" + (form.size === s.key ? " sel" : "")} onClick={() => setForm({ ...form, size: s.key })}>
+                    <div key={s.key} className={"chip size-chip" + (draft.size === s.key ? " sel" : "")} onClick={() => setDraft({ ...draft, size: s.key })}>
                       {s.key}<small>{s.label}</small>
                     </div>
                   ))}
                 </div>
               </div>
-              <button className="go-btn" onClick={handleGetQuote}>Get landed cost</button>
-              {formError && <div className="error-note">{formError}</div>}
+              <button className="go-btn secondary" onClick={addItemToCart}>+ Add to cart</button>
+              {cartError && <div className="error-note">{cartError}</div>}
+
+              {cart.length > 0 && (
+                <div className="cart-list">
+                  <div className="cart-list-head">Your cart ({cart.length} item{cart.length > 1 ? "s" : ""})</div>
+                  {cart.map(item => (
+                    <div key={item.localId} className="cart-item">
+                      <div>
+                        <div className="cart-item-name">{item.productName}</div>
+                        <div className="cart-item-meta">{item.retailer} · {item.parcelSize} · R {money(item.price)}</div>
+                      </div>
+                      <button className="cart-remove" onClick={() => removeItem(item.localId)} aria-label="Remove item">×</button>
+                    </div>
+                  ))}
+                  {cart.length >= 2 && (
+                    <div className="cart-savings-hint">Shipping these {cart.length} items together saves on transport versus separate orders.</div>
+                  )}
+                </div>
+              )}
+
+              <button className="go-btn" onClick={handleGetQuote} disabled={cart.length === 0}>
+                Get landed cost {cart.length > 0 ? `for ${cart.length} item${cart.length > 1 ? "s" : ""}` : ""}
+              </button>
+              {quoteError && <div className="error-note">{quoteError}</div>}
+
+              <div className="store-request-box">
+                {!storeFormOpen ? (
+                  <span className="back-link" onClick={() => setStoreFormOpen(true)}>Don't see your store? Request it →</span>
+                ) : (
+                  <div>
+                    <label>Which store would you like to shop from?</label>
+                    <input value={storeName} onChange={e => setStoreName(e.target.value)} placeholder="e.g. Woolworths" />
+                    <input value={storeNote} onChange={e => setStoreNote(e.target.value)} placeholder="Anything else? (optional)" style={{ marginTop: 8 }} />
+                    <div className="store-request-actions">
+                      <button className="go-btn secondary small" disabled={storeStatus === "sending"} onClick={handleSubmitStoreRequest}>
+                        {storeStatus === "sending" ? "Sending…" : "Submit request"}
+                      </button>
+                      <span className="back-link" onClick={() => { setStoreFormOpen(false); setStoreStatus("idle"); }}>Cancel</span>
+                    </div>
+                    {storeStatus === "sent" && <div className="success-note">Thanks — we've logged {`"${storeName || "your"}"`} as a request.</div>}
+                    {storeStatus === "error" && <div className="error-note">{storeErrorMsg}</div>}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -191,30 +310,43 @@ export default function App() {
         {screen === "s2" && quote && (
           <div className="checkout-grid">
             <div className="main-card">
-              <div className="product-card">
-                <div className="product-thumb">{form.name.charAt(0).toUpperCase() || "?"}</div>
-                <div>
-                  <p className="product-name">{form.name}</p>
-                  <p className="product-meta">{form.retailer} · {form.size} parcel</p>
+              <h3 className="card-heading">Items in this shipment</h3>
+              {cart.map(item => (
+                <div key={item.localId} className="product-card">
+                  <div className="product-thumb">{item.productName.charAt(0).toUpperCase()}</div>
+                  <div>
+                    <p className="product-name">{item.productName}</p>
+                    <p className="product-meta">{item.retailer} · {item.parcelSize} parcel · R {money(item.price)}</p>
+                  </div>
                 </div>
-              </div>
-              <h3 className="card-heading">Landed cost to Gaborone</h3>
-              <div className="line-item"><span className="label">Product price</span><span className="val">R {money(quote.price)}</span></div>
+              ))}
+
+              <h3 className="card-heading" style={{ marginTop: 8 }}>Landed cost to Gaborone</h3>
+              <div className="line-item"><span className="label">Items total ({quote.itemCount})</span><span className="val">R {money(quote.totalPrice)}</span></div>
               <div className="line-item"><span className="label">Shopping service fee (5%, min R150)</span><span className="val">R {money(quote.serviceFee)}</span></div>
-              <div className="line-item"><span className="label">Cross-border transport</span><span className="val">R {money(quote.transportFee)}</span></div>
+              <div className="line-item">
+                <span className="label">Cross-border transport{quote.consolidationDiscountPct > 0 ? ` (${quote.consolidationDiscountPct}% consolidation discount)` : ""}</span>
+                <span className="val">
+                  {quote.transportSavings > 0 && <span className="strike">R {money(quote.rawTransportFee)}</span>}
+                  {" "}R {money(quote.transportFee)}
+                </span>
+              </div>
               <div className="line-item"><span className="label">Estimated customs duty (15%)</span><span className="val">R {money(quote.customsDuty)}</span></div>
-              {form.insurance && (
+              {insurance && (
                 <div className="line-item"><span className="label">Shipment insurance (1%)</span><span className="val">R {money(quote.insuranceFee)}</span></div>
               )}
+              {quote.transportSavings > 0 && (
+                <div className="savings-badge">You're saving R {money(quote.transportSavings)} on transport by shipping {quote.itemCount} items together.</div>
+              )}
               <div className="insurance-toggle" onClick={async () => {
-                const next = { ...form, insurance: !form.insurance };
-                setForm(next);
-                await refreshQuote(next);
+                const next = !insurance;
+                setInsurance(next);
+                await refreshQuoteWithInsurance(next);
               }}>
                 <span>Add shipment insurance</span>
-                <div className={"switch" + (form.insurance ? " on" : "")} />
+                <div className={"switch" + (insurance ? " on" : "")} />
               </div>
-              <div><span className="back-link" onClick={() => setScreen("s1")}>← Edit product details</span></div>
+              <div><span className="back-link" onClick={() => setScreen("s1")}>← Edit cart</span></div>
             </div>
             <div className="summary-card">
               <span className="summary-label">Total, paid once</span>
@@ -238,10 +370,10 @@ export default function App() {
                   </div>
                 ))}
               </div>
-              <p className="secure-note">Your order is only placed with the retailer once payment clears.</p>
+              <p className="secure-note">Your order is only placed with the retailer(s) once payment clears.</p>
             </div>
             <div className="summary-card">
-              <span className="summary-label">Total due today</span>
+              <span className="summary-label">Total due today ({quote.itemCount} item{quote.itemCount > 1 ? "s" : ""})</span>
               <div className="summary-total">P {money(quote.totalBwp)}</div>
               <button className="pay-btn" disabled={placing} onClick={handlePlaceOrder}>
                 {placing ? "Placing order…" : `Pay P ${money(quote.totalBwp)}`}
@@ -260,7 +392,9 @@ export default function App() {
                 orders.map(o => (
                   <div key={o.id} className={"order-list-item" + (activeOrder?.id === o.id ? " sel" : "")} onClick={() => setActiveOrderId(o.id)}>
                     <div className="order-list-ref">{o.reference}</div>
-                    <div className="order-list-name">{o.productName}</div>
+                    <div className="order-list-name">
+                      {o.items[0]?.productName}{o.items.length > 1 ? ` & ${o.items.length - 1} more` : ""}
+                    </div>
                     <div className="order-list-stage">{STAGES[o.stageIndex]}</div>
                   </div>
                 ))
@@ -273,8 +407,18 @@ export default function App() {
                 <>
                   <div className="track-head">
                     <div className="order-id">Order {activeOrder.reference} · {activeOrder.paymentMethod}</div>
-                    <h3>{activeOrder.productName}</h3>
+                    <h3>{activeOrder.items.length > 1 ? `${activeOrder.items.length} items in this shipment` : activeOrder.items[0]?.productName}</h3>
                   </div>
+                  {activeOrder.items.length > 1 && (
+                    <div className="track-items">
+                      {activeOrder.items.map((it, i) => (
+                        <div key={i} className="track-item-row">
+                          <span className="track-item-name">{it.productName}</span>
+                          <span className="track-item-retailer">{it.retailer}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <div className="route-line">
                     {STAGES.map((stage, i) => {
                       const cls = i < activeOrder.stageIndex ? "done" : i === activeOrder.stageIndex ? "current" : "";
@@ -304,8 +448,6 @@ export default function App() {
     </div>
   );
 }
-
-
 
 
 
