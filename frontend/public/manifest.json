@@ -1,0 +1,18 @@
+{
+  "name": "Shop South Africa — Mok Transports",
+  "short_name": "Shop SA",
+  "description": "Shop South African retailers and get it delivered to Botswana, with one payment and full tracking.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#F4F5F6",
+  "theme_color": "#00306E",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
+
+

@@ -10,29 +10,61 @@ async function handle(res) {
   return data;
 }
 
+// Every call that touches a session cookie needs credentials: "include" —
+// without it, the browser won't send/accept the httpOnly auth cookie,
+// especially cross-origin (frontend and backend are separate Render
+// services in production).
+function authedFetch(path, options = {}) {
+  return fetch(`${BASE}${path}`, { ...options, credentials: "include" }).then(handle);
+}
+
 // items: [{ price, parcelSize, retailer?, productName?, productLink? }, ...]
 export function getQuote({ items, insurance }) {
-  return fetch(`${BASE}/quote`, {
+  return authedFetch(`/quote`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ items, insurance }),
-  }).then(handle);
+  });
 }
 
 export function createOrder(payload) {
-  return fetch(`${BASE}/orders`, {
+  return authedFetch(`/orders`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
-  }).then(handle);
+  });
 }
 
 export function listOrders() {
-  return fetch(`${BASE}/orders`).then(handle);
+  return authedFetch(`/orders`);
 }
 
 export function advanceOrder(id) {
-  return fetch(`${BASE}/orders/${id}/advance`, { method: "POST" }).then(handle);
+  return authedFetch(`/orders/${id}/advance`, { method: "POST" });
+}
+
+export function signup({ email, password, name, phone }) {
+  return authedFetch(`/auth/signup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password, name, phone }),
+  });
+}
+
+export function login({ email, password }) {
+  return authedFetch(`/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+export function logout() {
+  return authedFetch(`/auth/logout`, { method: "POST" });
+}
+
+export function getMe() {
+  return authedFetch(`/auth/me`);
 }
 
 export function requestStore({ storeName, link, note }) {

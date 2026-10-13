@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { getQuote, createOrder, listOrders, advanceOrder, requestStore } from "./api.js";
+import { getQuote, createOrder, listOrders, advanceOrder, requestStore, getMe, logout } from "./api.js";
+import AuthScreen from "./Auth.jsx";
 
 const RETAILERS = ["Takealot", "Makro", "SHEIN", "Game", "Superbalist", "Bash", "Builders", "Incredible Connection", "Akhona Furniture", "Other"];
 const SIZES = [
@@ -41,7 +42,47 @@ function fmtTime(iso) {
 }
 function itemRetailer(item) { return item.retailer; }
 
+// Gatekeeper: checks for an existing session on load, shows the login/signup
+// screen if there isn't one, and renders the real app (ShopApp) once there
+// is. Also owns the PWA "install" prompt, since it lives in the header
+// regardless of which screen inside the app is showing.
 export default function App() {
+  const [authChecked, setAuthChecked] = useState(false);
+  const [user, setUser] = useState(null);
+  const [installEvent, setInstallEvent] = useState(null);
+
+  useEffect(() => {
+    getMe().then(setUser).catch(() => {}).finally(() => setAuthChecked(true));
+  }, []);
+
+  useEffect(() => {
+    function onBeforeInstall(e) {
+      e.preventDefault();
+      setInstallEvent(e);
+    }
+    window.addEventListener("beforeinstallprompt", onBeforeInstall);
+    return () => window.removeEventListener("beforeinstallprompt", onBeforeInstall);
+  }, []);
+
+  async function handleLogout() {
+    await logout().catch(() => {});
+    setUser(null);
+  }
+
+  if (!authChecked) return null; // avoid a login-screen flash while checking for a session
+  if (!user) return <AuthScreen onAuthed={setUser} />;
+
+  return (
+    <ShopApp
+      user={user}
+      onLogout={handleLogout}
+      installEvent={installEvent}
+      onInstall={() => { installEvent?.prompt(); setInstallEvent(null); }}
+    />
+  );
+}
+
+function ShopApp({ user, onLogout, installEvent, onInstall }) {
   const [screen, setScreen] = useState("s1");
   const [draft, setDraft] = useState(emptyDraft);
   const [cart, setCart] = useState([]);
@@ -61,8 +102,10 @@ export default function App() {
   const [storeErrorMsg, setStoreErrorMsg] = useState("");
 
   const refreshOrders = useCallback(() => {
-    listOrders().then(setOrders).catch(() => {});
-  }, []);
+    listOrders().then(setOrders).catch((err) => {
+      if (err.message.includes("log in")) onLogout(); // session expired/cookie cleared elsewhere
+    });
+  }, [onLogout]);
   useEffect(() => { refreshOrders(); }, [refreshOrders]);
 
   function addItemToCart() {
@@ -199,6 +242,13 @@ export default function App() {
               </button>
             ))}
           </nav>
+          <div className="topbar-account">
+            {installEvent && (
+              <button className="install-btn" onClick={onInstall}>Install app</button>
+            )}
+            <span className="topbar-username">{user.name.split(" ")[0]}</span>
+            <button className="logout-btn" onClick={onLogout}>Log out</button>
+          </div>
         </div>
       </header>
 

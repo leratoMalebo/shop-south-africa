@@ -1,16 +1,17 @@
 import { Router } from "express";
 import crypto from "node:crypto";
 import { computeBatchBreakdown, generateReference, STAGES } from "../calc.js";
-import { createOrder, listOrders, getOrder, updateOrderStage } from "../db.js";
+import { createOrder, listOrdersForUser, getOrder, updateOrderStage } from "../db.js";
+import { requireAuth } from "../auth.js";
 
 const router = Router();
 
-// POST /api/orders — creates an order from one or more items (a "batch").
-// In this prototype, creating an order IS the payment confirmation step
-// (stageIndex starts at 0 = "Payment confirmed"). Wiring a real payment
-// gateway means calling this only from that gateway's success
-// webhook/callback, not directly from the client.
-router.post("/", async (req, res) => {
+// POST /api/orders — creates an order from one or more items (a "batch"),
+// owned by the logged-in user. In this prototype, creating an order IS the
+// payment confirmation step (stageIndex starts at 0 = "Payment confirmed").
+// Wiring a real payment gateway means calling this only from that
+// gateway's success webhook/callback, not directly from the client.
+router.post("/", requireAuth, async (req, res) => {
   const { items, insurance, paymentMethod } = req.body;
 
   try {
@@ -31,6 +32,7 @@ router.post("/", async (req, res) => {
       paid: true,
       stageIndex: 0,
       stageTimes: JSON.stringify([new Date().toISOString(), null, null, null, null, null]),
+      userId: req.userId,
     });
 
     res.status(201).json(serialize(order));
@@ -39,25 +41,31 @@ router.post("/", async (req, res) => {
   }
 });
 
-// GET /api/orders — list all orders, most recent first
-router.get("/", async (req, res) => {
-  const orders = await listOrders();
+// GET /api/orders — the logged-in user's own orders only, most recent first.
+router.get("/", requireAuth, async (req, res) => {
+  const orders = await listOrdersForUser(req.userId);
   res.json(orders.map(serialize));
 });
 
-// GET /api/orders/:id
-router.get("/:id", async (req, res) => {
+// GET /api/orders/:id — only if it belongs to the requesting user.
+router.get("/:id", requireAuth, async (req, res) => {
   const order = await getOrder(req.params.id);
-  if (!order) return res.status(404).json({ error: "Order not found" });
+  if (!order || order.userId !== req.userId) {
+    return res.status(404).json({ error: "Order not found" });
+  }
   res.json(serialize(order));
 });
 
 // POST /api/orders/:id/advance — moves the order to the next workflow stage.
-// Stands in for the ops dashboard until that's built (see design spec,
-// section 4). In production this should require staff auth.
-router.post("/:id/advance", async (req, res) => {
+// Still a placeholder for the real ops dashboard's action — kept open to
+// the order's owner for now so the demo/testing flow keeps working; this
+// should move behind requireStaff once the admin dashboard lands, since a
+// customer shouldn't really be able to advance their own shipment.
+router.post("/:id/advance", requireAuth, async (req, res) => {
   const order = await getOrder(req.params.id);
-  if (!order) return res.status(404).json({ error: "Order not found" });
+  if (!order || order.userId !== req.userId) {
+    return res.status(404).json({ error: "Order not found" });
+  }
   if (order.stageIndex >= STAGES.length - 1) {
     return res.status(400).json({ error: "Order already at final stage" });
   }
@@ -106,5 +114,7 @@ function serialize(order) {
 }
 
 export default router;
+
+
 
 

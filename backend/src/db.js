@@ -69,25 +69,57 @@ await pool.query(`
   );
 `);
 
+// Real accounts. "role" is a plain text column rather than a separate
+// table/enum on purpose — this is the first cut of auth, and a staff flag
+// is all the upcoming admin dashboard needs; it can graduate into a proper
+// roles/permissions table later without touching anything else here.
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    email TEXT UNIQUE NOT NULL,
+    "passwordHash" TEXT NOT NULL,
+    name TEXT NOT NULL,
+    phone TEXT,
+    role TEXT NOT NULL DEFAULT 'customer', -- 'customer' | 'staff'
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+`);
+
+// Orders now belong to a user. Nullable + migrated in, so every order
+// placed during the pilot (before accounts existed) still reads back fine
+// — just with no owner, which the UI/route layer treats as "unclaimed".
+await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS "userId" TEXT REFERENCES users(id);`);
+
 export async function createOrder(order) {
   const { rows } = await pool.query(
     `INSERT INTO orders (
       id, reference, items, "serviceFee", "transportFee", "rawTransportFee",
       "customsDuty", "insuranceFee", "totalZar", "totalBwp", "paymentMethod",
-      paid, "stageIndex", "stageTimes"
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+      paid, "stageIndex", "stageTimes", "userId"
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
     RETURNING *`,
     [
       order.id, order.reference, order.items, order.serviceFee, order.transportFee,
       order.rawTransportFee, order.customsDuty, order.insuranceFee, order.totalZar,
       order.totalBwp, order.paymentMethod, order.paid, order.stageIndex, order.stageTimes,
+      order.userId,
     ]
   );
   return rows[0];
 }
 
+// Used by the admin dashboard (staff see every order).
 export async function listOrders() {
   const { rows } = await pool.query(`SELECT * FROM orders ORDER BY "createdAt" DESC`);
+  return rows;
+}
+
+// Used by the customer-facing tracker (a customer only sees their own).
+export async function listOrdersForUser(userId) {
+  const { rows } = await pool.query(
+    `SELECT * FROM orders WHERE "userId" = $1 ORDER BY "createdAt" DESC`,
+    [userId]
+  );
   return rows;
 }
 
@@ -104,6 +136,25 @@ export async function updateOrderStage(id, stageIndex, stageTimes) {
   return rows[0];
 }
 
+export async function createUser(user) {
+  const { rows } = await pool.query(
+    `INSERT INTO users (id, email, "passwordHash", name, phone, role)
+     VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+    [user.id, user.email.toLowerCase(), user.passwordHash, user.name, user.phone || null, user.role || "customer"]
+  );
+  return rows[0];
+}
+
+export async function getUserByEmail(email) {
+  const { rows } = await pool.query(`SELECT * FROM users WHERE email = $1`, [email.toLowerCase()]);
+  return rows[0];
+}
+
+export async function getUserById(id) {
+  const { rows } = await pool.query(`SELECT * FROM users WHERE id = $1`, [id]);
+  return rows[0];
+}
+
 export async function createStoreRequest(req) {
   const { rows } = await pool.query(
     `INSERT INTO store_requests (id, "storeName", link, note) VALUES ($1,$2,$3,$4) RETURNING *`,
@@ -116,6 +167,7 @@ export async function listStoreRequests() {
   const { rows } = await pool.query(`SELECT * FROM store_requests ORDER BY "createdAt" DESC`);
   return rows;
 }
+
 
 
 
