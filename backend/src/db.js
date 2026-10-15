@@ -155,6 +155,32 @@ export async function getUserById(id) {
   return rows[0];
 }
 
+export async function setUserRole(id, role) {
+  const { rows } = await pool.query(`UPDATE users SET role = $1 WHERE id = $2 RETURNING *`, [role, id]);
+  return rows[0];
+}
+
+// Staff view: every order, with the customer's contact details attached so
+// the team knows who to follow up with about payment/delivery.
+export async function listAllOrdersWithCustomers() {
+  const { rows } = await pool.query(`
+    SELECT o.*, u.name AS "customerName", u.email AS "customerEmail", u.phone AS "customerPhone"
+    FROM orders o LEFT JOIN users u ON u.id = o."userId"
+    ORDER BY o."createdAt" DESC
+  `);
+  return rows;
+}
+
+// Marks an order as paid and stamps the first timeline stage ("Payment
+// confirmed") with the moment staff verified the money arrived.
+export async function confirmOrderPayment(id, stageTimes) {
+  const { rows } = await pool.query(
+    `UPDATE orders SET paid = true, "stageTimes" = $1, "updatedAt" = now() WHERE id = $2 RETURNING *`,
+    [stageTimes, id]
+  );
+  return rows[0];
+}
+
 export async function createStoreRequest(req) {
   const { rows } = await pool.query(
     `INSERT INTO store_requests (id, "storeName", link, note) VALUES ($1,$2,$3,$4) RETURNING *`,
@@ -167,7 +193,6 @@ export async function listStoreRequests() {
   const { rows } = await pool.query(`SELECT * FROM store_requests ORDER BY "createdAt" DESC`);
   return rows;
 }
-
 
 
 

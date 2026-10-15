@@ -38,8 +38,16 @@ export function clearAuthCookie(res) {
   });
 }
 
+// Accepts the session from either the httpOnly cookie or an
+// "Authorization: Bearer <token>" header. The header path exists because
+// Safari/iPhone blocks cookies between two different sites (the frontend and
+// API live on separate onrender.com subdomains), which would otherwise leave
+// iPhone users unable to stay logged in. Once both run under one custom
+// domain, the cookie alone is enough and the header path can be retired.
 export function getUserIdFromRequest(req) {
-  const token = req.cookies?.[COOKIE_NAME];
+  const header = req.headers.authorization || "";
+  const bearer = header.startsWith("Bearer ") ? header.slice(7).trim() : null;
+  const token = req.cookies?.[COOKIE_NAME] || bearer;
   if (!token) return null;
   try {
     const payload = jwt.verify(token, JWT_SECRET);
@@ -72,3 +80,6 @@ export async function requireStaff(req, res, next) {
   req.user = user;
   next();
 }
+
+
+

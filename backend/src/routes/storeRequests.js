@@ -1,6 +1,7 @@
 import { Router } from "express";
 import crypto from "node:crypto";
 import { createStoreRequest, listStoreRequests } from "../db.js";
+import { requireStaff } from "../auth.js";
 
 const router = Router();
 
@@ -22,12 +23,13 @@ router.post("/", async (req, res) => {
   res.status(201).json(created);
 });
 
-// GET /api/store-requests — for internal review of demand. No auth yet;
-// add it before this is exposed anywhere staff-only.
-router.get("/", async (req, res) => {
+// GET /api/store-requests — for internal review of demand. Staff only.
+router.get("/", requireStaff, async (req, res) => {
   res.json(await listStoreRequests());
 });
 
 export default router;
+
+
 
 

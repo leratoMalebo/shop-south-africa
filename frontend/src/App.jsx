@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { getQuote, createOrder, listOrders, advanceOrder, requestStore, getMe, logout } from "./api.js";
+import { getQuote, createOrder, listOrders, requestStore, getMe, logout } from "./api.js";
 import AuthScreen from "./Auth.jsx";
+import AdminScreen from "./Admin.jsx";
 
 const RETAILERS = ["Takealot", "Makro", "SHEIN", "Game", "Superbalist", "Bash", "Builders", "Incredible Connection", "Akhona Furniture", "Other"];
 const SIZES = [
@@ -8,11 +9,14 @@ const SIZES = [
   { key: "Medium", label: "5–15kg" },
   { key: "Large", label: "15–30kg" },
 ];
+// Payments are manual for now: the customer sends the money using their order
+// reference and our team confirms it. Card payments need a payment-gateway
+// account first, so that option is shown but switched off.
 const PAY_METHODS = [
-  { key: "Visa / Mastercard", icon: "V/M", sub: "Charged instantly" },
-  { key: "Bank transfer (EFT)", icon: "EFT", sub: "Confirmed within 1 business day" },
-  { key: "Orange Money Botswana", icon: "OM", sub: "Confirm on your phone" },
-  { key: "Mascom MyZaka", icon: "MZ", sub: "Confirm on your phone" },
+  { key: "Bank transfer (EFT)", icon: "EFT", sub: "Send a transfer — confirmed once we receive it" },
+  { key: "Orange Money Botswana", icon: "OM", sub: "Send via Orange Money — confirmed once we receive it" },
+  { key: "Mascom MyZaka", icon: "MZ", sub: "Send via MyZaka — confirmed once we receive it" },
+  { key: "Visa / Mastercard", icon: "V/M", sub: "Coming soon", disabled: true },
 ];
 const STAGES = [
   "Payment confirmed",
@@ -90,7 +94,7 @@ function ShopApp({ user, onLogout, installEvent, onInstall }) {
   const [insurance, setInsurance] = useState(false);
   const [quote, setQuote] = useState(null);
   const [quoteError, setQuoteError] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState(PAY_METHODS[0].key);
+  const [paymentMethod, setPaymentMethod] = useState(PAY_METHODS.find(m => !m.disabled).key);
   const [orders, setOrders] = useState([]);
   const [activeOrderId, setActiveOrderId] = useState(null);
   const [placing, setPlacing] = useState(false);
@@ -107,6 +111,14 @@ function ShopApp({ user, onLogout, installEvent, onInstall }) {
     });
   }, [onLogout]);
   useEffect(() => { refreshOrders(); }, [refreshOrders]);
+  // Staff update orders from their own device, so re-fetch whenever the
+  // customer opens Track (and keep it fresh while they sit on it).
+  useEffect(() => {
+    if (screen !== "s4") return;
+    refreshOrders();
+    const t = setInterval(refreshOrders, 30000);
+    return () => clearInterval(t);
+  }, [screen, refreshOrders]);
 
   function addItemToCart() {
     const price = parseFloat(draft.price);
@@ -188,11 +200,6 @@ function ShopApp({ user, onLogout, installEvent, onInstall }) {
     }
   }
 
-  async function handleAdvance(id) {
-    const updated = await advanceOrder(id);
-    setOrders(prev => prev.map(o => (o.id === id ? updated : o)));
-  }
-
   async function handleSubmitStoreRequest() {
     if (!storeName.trim()) {
       setStoreErrorMsg("Enter the name of the store.");
@@ -231,7 +238,7 @@ function ShopApp({ user, onLogout, installEvent, onInstall }) {
             </div>
           </div>
           <nav className="step-nav">
-            {STEPS.map(s => (
+            {(user.role === "staff" ? [...STEPS, { key: "s5", label: "Admin" }] : STEPS).map(s => (
               <button
                 key={s.key}
                 className={"step-tab" + (screen === s.key ? " on" : "")}
@@ -253,6 +260,7 @@ function ShopApp({ user, onLogout, installEvent, onInstall }) {
       </header>
 
       <main className="main">
+        <IosInstallHint />
         {screen === "s1" && (
           <div className="hero-grid">
             <div className="hero-panel">
@@ -413,20 +421,24 @@ function ShopApp({ user, onLogout, installEvent, onInstall }) {
               <h3 className="card-heading">Choose how to pay</h3>
               <div className="pay-methods">
                 {PAY_METHODS.map(m => (
-                  <div key={m.key} className={"pay-method" + (paymentMethod === m.key ? " sel" : "")} onClick={() => setPaymentMethod(m.key)}>
+                  <div
+                    key={m.key}
+                    className={"pay-method" + (paymentMethod === m.key ? " sel" : "") + (m.disabled ? " disabled" : "")}
+                    onClick={() => !m.disabled && setPaymentMethod(m.key)}
+                  >
                     <div className="pay-icon">{m.icon}</div>
                     <div><div className="pay-name">{m.key}</div><div className="pay-sub">{m.sub}</div></div>
                     <div className="radio" />
                   </div>
                 ))}
               </div>
-              <p className="secure-note">Your order is only placed with the retailer(s) once payment clears.</p>
+              <p className="secure-note">After you place your order you'll see exactly how to pay, with your order reference. We only buy your items once we've confirmed your payment.</p>
             </div>
             <div className="summary-card">
               <span className="summary-label">Total due today ({quote.itemCount} item{quote.itemCount > 1 ? "s" : ""})</span>
               <div className="summary-total">P {money(quote.totalBwp)}</div>
               <button className="pay-btn" disabled={placing} onClick={handlePlaceOrder}>
-                {placing ? "Placing order…" : `Pay P ${money(quote.totalBwp)}`}
+                {placing ? "Placing order…" : `Place order · P ${money(quote.totalBwp)}`}
               </button>
             </div>
           </div>
@@ -445,14 +457,14 @@ function ShopApp({ user, onLogout, installEvent, onInstall }) {
                     <div className="order-list-name">
                       {o.items[0]?.productName}{o.items.length > 1 ? ` & ${o.items.length - 1} more` : ""}
                     </div>
-                    <div className="order-list-stage">{STAGES[o.stageIndex]}</div>
+                    <div className="order-list-stage">{o.paid ? STAGES[o.stageIndex] : "Awaiting payment"}</div>
                   </div>
                 ))
               )}
             </aside>
             <div className="main-card">
               {!activeOrder ? (
-                <div className="empty-state">No orders yet.<br />Complete a payment to see live tracking here.</div>
+                <div className="empty-state">No orders yet.<br />Place an order to see it tracked here.</div>
               ) : (
                 <>
                   <div className="track-head">
@@ -469,9 +481,19 @@ function ShopApp({ user, onLogout, installEvent, onInstall }) {
                       ))}
                     </div>
                   )}
+                  {!activeOrder.paid && (
+                    <div className="pay-pending">
+                      <div className="pay-pending-title">Awaiting your payment</div>
+                      <div className="pay-pending-amount">P {money(activeOrder.totalBwp)}</div>
+                      <div className="pay-pending-row"><span>Pay with</span><strong>{activeOrder.paymentMethod}</strong></div>
+                      <div className="pay-pending-row"><span>Use this reference</span><strong className="pay-ref">{activeOrder.reference}</strong></div>
+                      <div className="pay-pending-details">{activeOrder.paymentInstructions}</div>
+                      <p className="pay-pending-note">We start buying your items as soon as we confirm your payment. This page updates automatically — or message us on WhatsApp with your reference and proof of payment to speed things up.</p>
+                    </div>
+                  )}
                   <div className="route-line">
                     {STAGES.map((stage, i) => {
-                      const cls = i < activeOrder.stageIndex ? "done" : i === activeOrder.stageIndex ? "current" : "";
+                      const cls = !activeOrder.paid ? "" : i < activeOrder.stageIndex ? "done" : i === activeOrder.stageIndex ? "current" : "";
                       return (
                         <div key={stage} className={"stage " + cls}>
                           <div className="dot" />
@@ -481,20 +503,32 @@ function ShopApp({ user, onLogout, installEvent, onInstall }) {
                       );
                     })}
                   </div>
-                  <button
-                    className="advance-btn"
-                    disabled={activeOrder.stageIndex >= STAGES.length - 1}
-                    onClick={() => handleAdvance(activeOrder.id)}
-                  >
-                    {activeOrder.stageIndex >= STAGES.length - 1 ? "Delivered — no further stages" : "Simulate: advance to next stage"}
-                  </button>
-                  <p className="ops-note">This button stands in for the ops dashboard updating shipment status.</p>
                 </>
               )}
             </div>
           </div>
         )}
+
+        {screen === "s5" && user.role === "staff" && <AdminScreen />}
       </main>
+    </div>
+  );
+}
+
+
+// iPhone Safari never fires the install prompt Android does, so point people to
+// the manual route (Share → Add to Home Screen). Hidden once installed or dismissed.
+function IosInstallHint() {
+  const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const installed = window.navigator.standalone === true;
+  const [dismissed, setDismissed] = useState(() => {
+    try { return localStorage.getItem("shopsa_ios_hint") === "1"; } catch { return false; }
+  });
+  if (!isIos || installed || dismissed) return null;
+  return (
+    <div className="ios-hint">
+      <span>Install this app: tap <strong>Share</strong>, then <strong>Add to Home Screen</strong>.</span>
+      <button onClick={() => { try { localStorage.setItem("shopsa_ios_hint", "1"); } catch { /* ignore */ } setDismissed(true); }} aria-label="Dismiss">×</button>
     </div>
   );
 }

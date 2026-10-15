@@ -1,10 +1,23 @@
 import { Router } from "express";
 import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
-import { createUser, getUserByEmail, getUserById } from "../db.js";
+import { createUser, getUserByEmail, getUserById, setUserRole } from "../db.js";
 import { signToken, setAuthCookie, clearAuthCookie, requireAuth } from "../auth.js";
 
 const router = Router();
+
+// Staff accounts are designated by email in the STAFF_EMAILS environment
+// variable (comma-separated) — no database console needed. Anyone listed is
+// promoted to staff the next time they sign up or log in.
+const STAFF_EMAILS = (process.env.STAFF_EMAILS || "")
+  .split(",").map(e => e.trim().toLowerCase()).filter(Boolean);
+
+async function applyStaffRole(user) {
+  if (user.role !== "staff" && STAFF_EMAILS.includes(user.email.toLowerCase())) {
+    return (await setUserRole(user.id, "staff")) || user;
+  }
+  return user;
+}
 
 function publicUser(user) {
   return { id: user.id, email: user.email, name: user.name, phone: user.phone, role: user.role };
@@ -42,9 +55,10 @@ router.post("/signup", async (req, res) => {
     phone: phone || null,
   });
 
-  const token = signToken(user.id);
+  const finalUser = await applyStaffRole(user);
+  const token = signToken(finalUser.id);
   setAuthCookie(res, token);
-  res.status(201).json(publicUser(user));
+  res.status(201).json({ ...publicUser(finalUser), token });
 });
 
 // POST /api/auth/login
@@ -63,9 +77,10 @@ router.post("/login", async (req, res) => {
     return res.status(401).json({ error: "Incorrect email or password." });
   }
 
-  const token = signToken(user.id);
+  const finalUser = await applyStaffRole(user);
+  const token = signToken(finalUser.id);
   setAuthCookie(res, token);
-  res.json(publicUser(user));
+  res.json({ ...publicUser(finalUser), token });
 });
 
 // POST /api/auth/logout
@@ -82,5 +97,6 @@ router.get("/me", requireAuth, async (req, res) => {
 });
 
 export default router;
+
 
 
